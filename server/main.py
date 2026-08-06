@@ -1,7 +1,7 @@
 from typing import List, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 import api_messages
@@ -32,7 +32,7 @@ replace_base_href("client/dist/index.html", global_config.path_prefix)
 @router.get("/login", include_in_schema=False)
 @router.get("/search", include_in_schema=False)
 @router.get("/new", include_in_schema=False)
-@router.get("/note/{title}", include_in_schema=False)
+@router.get("/note/{title:path}", include_in_schema=False)
 def root(title: str = ""):
     with open("client/dist/index.html", "r", encoding="utf-8") as f:
         html = f.read()
@@ -68,7 +68,7 @@ def auth_check() -> str:
 # region Notes
 # Get Note
 @router.get(
-    "/api/notes/{title}",
+    "/api/notes/{title:path}",
     dependencies=auth_deps,
     response_model=Note,
 )
@@ -108,7 +108,7 @@ if global_config.auth_type != AuthType.READ_ONLY:
 
     # Update Note
     @router.patch(
-        "/api/notes/{title}",
+        "/api/notes/{title:path}",
         dependencies=auth_deps,
         response_model=Note,
     )
@@ -129,7 +129,7 @@ if global_config.auth_type != AuthType.READ_ONLY:
 
     # Delete Note
     @router.delete(
-        "/api/notes/{title}",
+        "/api/notes/{title:path}",
         dependencies=auth_deps,
         response_model=None,
     )
@@ -202,13 +202,6 @@ def get_config():
     "/api/attachments/{filename}",
     dependencies=auth_deps,
 )
-# Include a secondary route used to create relative URLs that can be used
-# outside the context of flatnotes (e.g. "/attachments/image.jpg").
-@router.get(
-    "/attachments/{filename}",
-    dependencies=auth_deps,
-    include_in_schema=False,
-)
 def get_attachment(filename: str):
     """Download an attachment."""
     try:
@@ -254,6 +247,61 @@ def healthcheck() -> str:
     """A lightweight endpoint that simply returns 'OK' to indicate the server
     is running."""
     return "OK"
+
+
+# endregion
+
+
+# region Vault Static Files
+# Serve images/attachments from the Obsidian vault directory
+# and redirect bare note names (e.g. /day1) to note pages.
+
+
+def _redirect_to_note(note_path: str) -> RedirectResponse:
+    """302 redirect a relative vault path (with / slashes) to a flatnotes note URL."""
+    from urllib.parse import quote
+
+    if note_path.endswith(".md"):
+        note_path = note_path[:-3]
+    encoded = quote(note_path, safe="")  # encode / → %2F for Vue Router
+    return RedirectResponse(
+        url=f"{global_config.path_prefix}/note/{encoded}",
+        status_code=302,
+    )
+
+
+@router.get("/{file_path:path}", include_in_schema=False)
+async def serve_vault(file_path: str):
+    from os import path
+    import glob
+
+    vault_root = "/home/ubuntu/obsidian-vault"
+
+    # 1) Exact match in vault
+    vault_path = path.join(vault_root, file_path)
+    if path.isfile(vault_path):
+        if file_path.endswith(".md"):
+            return _redirect_to_note(file_path)
+        return FileResponse(vault_path)
+
+    # 2) Glob fallback (catches bare names like "day1" → "trip/day1.md")
+    if not file_path.startswith(("api/", "assets/", "favicon", "android-chrome", "safari-pinned", "site.webmanifest")):
+        matches = glob.glob(path.join(vault_root, "**", path.basename(file_path) + "*"), recursive=True)
+        if matches:
+            m = matches[0]
+            if m.endswith(".md"):
+                rel = path.relpath(m, vault_root)
+                return _redirect_to_note(rel)
+            return FileResponse(m)
+
+    # 3) SPA static assets (JS, CSS, favicon, etc.)
+    dist_path = path.join("client/dist", file_path)
+    if path.isfile(dist_path):
+        return FileResponse(dist_path)
+
+    # 4) SPA fallback
+    with open("client/dist/index.html", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
 
 
 # endregion

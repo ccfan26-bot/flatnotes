@@ -223,13 +223,22 @@ class FileSystemNotes(BaseNotes):
         )
 
     def _list_all_note_filenames(self) -> List[str]:
-        """Return a list of all note filenames."""
-        return [
-            os.path.split(filepath)[1]
-            for filepath in glob.glob(
-                os.path.join(self.storage_path, "*" + MARKDOWN_EXT)
-            )
-        ]
+        """Return a list of all note filenames (relative to storage_path)."""
+        notes = []
+        for filepath in glob.glob(
+            os.path.join(self.storage_path, "**", "*" + MARKDOWN_EXT),
+            recursive=True,
+        ):
+            rel_path = os.path.relpath(filepath, self.storage_path)
+            notes.append(rel_path)
+        # Also include root-level .md files
+        for filepath in glob.glob(
+            os.path.join(self.storage_path, "*" + MARKDOWN_EXT)
+        ):
+            rel_path = os.path.relpath(filepath, self.storage_path)
+            if rel_path not in notes:
+                notes.append(rel_path)
+        return notes
 
     def _sync_index(self, optimize: bool = False, clean: bool = False) -> None:
         """Synchronize the index with the notes directory.

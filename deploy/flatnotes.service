@@ -1,0 +1,16 @@
+[Unit]
+Description=flatnotes — Markdown 笔记服务
+Documentation=https://github.com/dullage/flatnotes
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/flatnotes
+EnvironmentFile=/home/ubuntu/flatnotes/.env
+ExecStart=/home/ubuntu/flatnotes/venv/bin/python -m uvicorn main:app --app-dir server --host 127.0.0.1 --port 8787
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
